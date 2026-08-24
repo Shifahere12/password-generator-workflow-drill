@@ -9,6 +9,7 @@ Features:
 - Password strength indicator (Weak / Medium / Strong)
 - "Copy to Clipboard" button using pyperclip
 - Option to exclude ambiguous characters (0, O, l, 1, I, etc.)
+- Option to exclude specific user-defined characters from selected pools
 - Session-only generation history (last 5 passwords) — NOT persisted to disk
 """
 
@@ -24,13 +25,72 @@ except ImportError:
     CLIPBOARD_AVAILABLE = False
 
 AMBIGUOUS_CHARS = "0Ol1I|`'\""
+SYMBOL_POOL = "!@#$%^&*()-_=+[]{};:,.?/"
+
+
+def normalize_exclude_chars(text: str) -> str:
+    """Strip whitespace and duplicate characters from the exclude field."""
+    seen = set()
+    result = []
+    for ch in text:
+        if ch.isspace():
+            continue
+        if ch not in seen:
+            seen.add(ch)
+            result.append(ch)
+    return "".join(result)
+
+
+def build_character_pools(
+    use_upper: bool,
+    use_lower: bool,
+    use_digits: bool,
+    use_symbols: bool,
+    exclude_ambiguous: bool,
+    exclude_specific: str,
+) -> list[str]:
+    """Return filtered character pools for each selected type."""
+    pools = []
+    ambiguous = set(AMBIGUOUS_CHARS) if exclude_ambiguous else set()
+    specific = set(normalize_exclude_chars(exclude_specific))
+    excluded = ambiguous | specific
+
+    def clean(pool: str) -> str:
+        if excluded:
+            return "".join(c for c in pool if c not in excluded)
+        return pool
+
+    if use_upper:
+        pools.append(clean(string.ascii_uppercase))
+    if use_lower:
+        pools.append(clean(string.ascii_lowercase))
+    if use_digits:
+        pools.append(clean(string.digits))
+    if use_symbols:
+        pools.append(clean(SYMBOL_POOL))
+
+    return pools
+
+
+def generate_password_from_pools(pools: list[str], length: int) -> str:
+    """Generate a password from pre-built pools (no GUI dependencies)."""
+    password_chars = [secrets.choice(pool) for pool in pools]
+    combined = "".join(pools)
+    while len(password_chars) < length:
+        password_chars.append(secrets.choice(combined))
+
+    for i in range(len(password_chars) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        password_chars[i], password_chars[j] = password_chars[j], password_chars[i]
+
+    return "".join(password_chars)
 
 
 class PasswordGeneratorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Password Generator")
-        self.root.geometry("460x560")
+        self.root.geometry("460x600")
         self.root.resizable(False, False)
         self.root.configure(bg="#1e1e2e")
 
@@ -109,7 +169,22 @@ class PasswordGeneratorApp:
             bg="#1e1e2e", fg="#f9e2af", selectcolor="#313244",
             activebackground="#1e1e2e", activeforeground="#f9e2af",
             font=("Segoe UI", 9, "italic"), anchor="w"
-        ).pack(fill="x", padx=10, pady=(6, 8))
+        ).pack(fill="x", padx=10, pady=(6, 4))
+
+        exclude_row = tk.Frame(types_frame, bg="#1e1e2e")
+        exclude_row.pack(fill="x", padx=10, pady=(0, 8))
+
+        tk.Label(
+            exclude_row, text="Exclude specific characters:",
+            bg="#1e1e2e", fg="#cdd6f4", font=("Segoe UI", 9)
+        ).pack(anchor="w")
+
+        self.exclude_chars_var = tk.StringVar(value="")
+        tk.Entry(
+            exclude_row, textvariable=self.exclude_chars_var,
+            bg="#313244", fg="#cdd6f4", insertbackground="#cdd6f4",
+            font=("Consolas", 10), relief="flat", bd=4
+        ).pack(fill="x", pady=(2, 0))
 
         # ---- Generate button ----
         gen_btn = tk.Button(
@@ -169,24 +244,14 @@ class PasswordGeneratorApp:
 
     def _selected_pools(self):
         """Return list of (pool_string) for each checked character type."""
-        pools = []
-        ambiguous = set(AMBIGUOUS_CHARS)
-
-        def clean(pool):
-            if self.exclude_ambiguous.get():
-                return "".join(c for c in pool if c not in ambiguous)
-            return pool
-
-        if self.use_upper.get():
-            pools.append(clean(string.ascii_uppercase))
-        if self.use_lower.get():
-            pools.append(clean(string.ascii_lowercase))
-        if self.use_digits.get():
-            pools.append(clean(string.digits))
-        if self.use_symbols.get():
-            pools.append(clean("!@#$%^&*()-_=+[]{};:,.?/"))
-
-        return pools
+        return build_character_pools(
+            self.use_upper.get(),
+            self.use_lower.get(),
+            self.use_digits.get(),
+            self.use_symbols.get(),
+            self.exclude_ambiguous.get(),
+            self.exclude_chars_var.get(),
+        )
 
     def generate_password(self):
         length = int(self.length_var.get())
@@ -203,20 +268,15 @@ class PasswordGeneratorApp:
             )
             return
 
-        # Guarantee at least one character from each selected type
-        password_chars = [secrets.choice(pool) for pool in pools]
+        if any(not pool for pool in pools):
+            messagebox.showerror(
+                "Invalid Exclusions",
+                "Your excluded characters remove all characters from one or more "
+                "selected types. Please adjust your exclusions or character types."
+            )
+            return
 
-        # Fill the rest from the combined pool
-        combined = "".join(pools)
-        while len(password_chars) < length:
-            password_chars.append(secrets.choice(combined))
-
-        # Shuffle securely so guaranteed chars aren't always at the front
-        for i in range(len(password_chars) - 1, 0, -1):
-            j = secrets.randbelow(i + 1)
-            password_chars[i], password_chars[j] = password_chars[j], password_chars[i]
-
-        password = "".join(password_chars)
+        password = generate_password_from_pools(pools, length)
         self.result_var.set(password)
 
         self._update_strength(password)
@@ -267,6 +327,44 @@ class PasswordGeneratorApp:
             )
 
 
+def run_exclude_tests():
+    """Simple tests for exclude-specific-characters behavior."""
+    # (3) Whitespace and duplicate handling
+    assert normalize_exclude_chars("  a A a \t1\n1  ") == "aA1"
+
+    # (2) Exclusions that wipe out an entire selected pool
+    wiped_pools = build_character_pools(
+        use_upper=False,
+        use_lower=True,
+        use_digits=True,
+        use_symbols=False,
+        exclude_ambiguous=False,
+        exclude_specific=string.ascii_lowercase,
+    )
+    assert wiped_pools[0] == "", "Lowercase pool should be empty when all letters excluded"
+    assert any(not pool for pool in wiped_pools)
+
+    # (1) Excluded characters never appear in generated output
+    exclude = "aA1"
+    pools = build_character_pools(
+        use_upper=True,
+        use_lower=True,
+        use_digits=True,
+        use_symbols=False,
+        exclude_ambiguous=False,
+        exclude_specific=exclude,
+    )
+    assert all(pools), "Pools should remain non-empty for this exclusion set"
+    excluded = set(exclude)
+    for _ in range(200):
+        password = generate_password_from_pools(pools, length=24)
+        assert not any(ch in excluded for ch in password), (
+            f"Excluded character found in password: {password!r}"
+        )
+
+    print("All exclude-character tests passed.")
+
+
 def main():
     root = tk.Tk()
     app = PasswordGeneratorApp(root)
@@ -274,4 +372,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--test":
+        run_exclude_tests()
+    else:
+        main()
