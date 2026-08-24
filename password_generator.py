@@ -9,6 +9,7 @@ Features:
 - Password strength indicator (Weak / Medium / Strong)
 - "Copy to Clipboard" button using pyperclip
 - Option to exclude ambiguous characters (0, O, l, 1, I, etc.)
+- Custom exclusion of user-specified characters
 - Session-only generation history (last 5 passwords) — NOT persisted to disk
 """
 
@@ -30,7 +31,7 @@ class PasswordGeneratorApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Password Generator")
-        self.root.geometry("460x560")
+        self.root.geometry("460x600")
         self.root.resizable(False, False)
         self.root.configure(bg="#1e1e2e")
 
@@ -109,7 +110,22 @@ class PasswordGeneratorApp:
             bg="#1e1e2e", fg="#f9e2af", selectcolor="#313244",
             activebackground="#1e1e2e", activeforeground="#f9e2af",
             font=("Segoe UI", 9, "italic"), anchor="w"
-        ).pack(fill="x", padx=10, pady=(6, 8))
+        ).pack(fill="x", padx=10, pady=(6, 4))
+
+        exclude_frame = tk.Frame(types_frame, bg="#1e1e2e")
+        exclude_frame.pack(fill="x", padx=10, pady=(0, 8))
+
+        tk.Label(
+            exclude_frame, text="Exclude specific characters:",
+            bg="#1e1e2e", fg="#cdd6f4", font=("Segoe UI", 9), anchor="w"
+        ).pack(anchor="w")
+
+        self.exclude_custom_var = tk.StringVar(value="")
+        tk.Entry(
+            exclude_frame, textvariable=self.exclude_custom_var,
+            bg="#313244", fg="#cdd6f4", insertbackground="#cdd6f4",
+            font=("Consolas", 10), relief="flat"
+        ).pack(fill="x", pady=(2, 0))
 
         # ---- Generate button ----
         gen_btn = tk.Button(
@@ -167,14 +183,24 @@ class PasswordGeneratorApp:
     def _on_slider_move(self, value):
         self.length_label.config(text=str(int(float(value))))
 
+    def _excluded_chars(self):
+        """Return the set of characters to omit from all pools."""
+        excluded = set()
+        if self.exclude_ambiguous.get():
+            excluded.update(AMBIGUOUS_CHARS)
+        custom = self.exclude_custom_var.get()
+        if custom:
+            excluded.update(custom)
+        return excluded
+
     def _selected_pools(self):
         """Return list of (pool_string) for each checked character type."""
         pools = []
-        ambiguous = set(AMBIGUOUS_CHARS)
+        excluded = self._excluded_chars()
 
         def clean(pool):
-            if self.exclude_ambiguous.get():
-                return "".join(c for c in pool if c not in ambiguous)
+            if excluded:
+                return "".join(c for c in pool if c not in excluded)
             return pool
 
         if self.use_upper.get():
@@ -200,6 +226,15 @@ class PasswordGeneratorApp:
             messagebox.showerror(
                 "Selection Required",
                 "Please select at least 2 character types to generate a strong password."
+            )
+            return
+
+        if any(len(pool) == 0 for pool in pools):
+            messagebox.showerror(
+                "Invalid Exclusions",
+                "Excluding these characters leaves one or more selected types "
+                "with no available characters. Remove some exclusions or enable "
+                "more character types."
             )
             return
 

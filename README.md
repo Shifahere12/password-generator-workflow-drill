@@ -16,6 +16,7 @@ Advanced Tier.
 - Visual strength indicator (Weak / Medium / Strong) with a progress bar
 - One-click "Copy to Clipboard" via `pyperclip`
 - Optional exclusion of ambiguous characters (`0`, `O`, `l`, `1`, `I`, etc.)
+- Custom exclusion of any user-specified characters via a text field
 - Session-only history of the last 5 generated passwords (never written to disk,
   for security)
 
